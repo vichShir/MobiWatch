@@ -9,7 +9,8 @@ def se2rmse(a):
     return torch.sqrt(sum(a.t())/a.shape[1])
 
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 # hyper params
 feature_size = None # will be set based on the input data
 hidden_len = 64
