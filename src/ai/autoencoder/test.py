@@ -13,6 +13,7 @@ test_dataset = "5g-mobiwatch"
 test_label = "abnormal"
 
 delimeter = ";"
+df_results = []
 
 # Step 1: Load and preprocess data
 data_folder = "../../../dataset/mobiflow"
@@ -28,126 +29,143 @@ X_sequences = encoder.encode_mobiflow(df, sequence_length)
 X_test = torch.tensor(X_sequences, dtype=torch.float32)
 
 # Load the saved model
-input_dim = X_test.shape[1]  # This should match the input_dim used during training
-model_path = "./data/autoencoder_model.pth"
+for fold in range(5):
+    input_dim = X_test.shape[1]  # This should match the input_dim used during training
+    model_path = f"./data/autoencoder_model_kfold={fold}.pth"
 
-model = Autoencoder(input_dim)
-model = torch.load(model_path)['model']
-model.eval()
-print(f"Model loaded from {model_path}")
+    model = Autoencoder(input_dim)
+    model = torch.load(model_path)['model']
+    model.eval()
+    print(f"Model loaded from {model_path}")
 
-# Detect anomalies
-with torch.no_grad():
-    reconstructions = model(X_test)
-    reconstruction_error = torch.mean((X_test - reconstructions) ** 2, dim=1)
+    # Detect anomalies
+    with torch.no_grad():
+        reconstructions = model(X_test)
+        reconstruction_error = torch.mean((X_test - reconstructions) ** 2, dim=1)
 
-threshold = torch.load(model_path)['threshold']
-anomalies = reconstruction_error > threshold
+    threshold = torch.load(model_path)['threshold']
+    anomalies = reconstruction_error > threshold
 
-# ground truth
-gt = {"blind dos": [10, 21, 32], 
-      "downlink dos": [38],
-      "downlink imsi extr": [102],
-      "uplink imsi extr": list(range(42, 47)),
-      "uplink dos": [71, 72],
-      "bts ddos": list(range(52, 64))+list(range(88, 97))+list(range(107, 125)),
-      "null cipher": list(range(82, 84))
-      }
+    # ground truth
+    gt = {"blind dos": [10, 21, 32], 
+          "downlink dos": [38],
+          "downlink imsi extr": [102],
+          "uplink imsi extr": list(range(42, 47)),
+          "uplink dos": [71, 72],
+          "bts ddos": list(range(52, 64))+list(range(88, 97))+list(range(107, 125)),
+          "null cipher": list(range(82, 84))
+          }
 
-fn = [v for k in gt.keys() for v in gt[k] ]
-fp = []
+    fn = [v for k in gt.keys() for v in gt[k] ]
+    fp = []
 
-# Convert back to DataFrame
-for anomalies_idx in torch.nonzero(anomalies).squeeze():
-    df_idx = anomalies_idx
-    sequence_data = df.loc[df_idx:df_idx + sequence_length - 1]
-    df_sequence = pd.DataFrame(sequence_data, columns=encoder.identifier_features + encoder.numerical_features + encoder.categorical_features)
-    print(df_sequence)
+    # Convert back to DataFrame
+    for anomalies_idx in torch.nonzero(anomalies).squeeze():
+        df_idx = anomalies_idx
+        sequence_data = df.loc[df_idx:df_idx + sequence_length - 1]
+        df_sequence = pd.DataFrame(sequence_data, columns=encoder.identifier_features + encoder.numerical_features + encoder.categorical_features)
+        print(df_sequence)
 
-    # evaluation with ground truth
-    attack_found = False
-    for attack in gt.keys():
-        for attack_idx in gt[attack]:
-            if anomalies_idx <= attack_idx < anomalies_idx + sequence_length:
-                attack_found = True
-                if attack_idx in fn:
-                    fn.remove(attack_idx) 
+        # evaluation with ground truth
+        attack_found = False
+        for attack in gt.keys():
+            for attack_idx in gt[attack]:
+                if anomalies_idx <= attack_idx < anomalies_idx + sequence_length:
+                    attack_found = True
+                    if attack_idx in fn:
+                        fn.remove(attack_idx) 
+            if attack_found:
+                break
+        
         if attack_found:
-            break
-    
-    if attack_found:
-        print(f"Attack: {attack}")
-    else:
-        print(f"False Positive")
-        fp.append(anomalies_idx)
+            print(f"Attack: {attack}")
+        else:
+            print(f"False Positive")
+            fp.append(anomalies_idx)
 
-    print()
+        print()
 
-print("FN:")
-print(fn)
-print("FP:")
-print(fp)
+    print("FN:")
+    print(fn)
+    print("FP:")
+    print(fp)
 
-POS = len([v for k in gt.keys() for v in gt[k]])
-NEG = X_test.shape[0] - POS
-FP = len(fp)
-FN = len(fn)
-TP = POS - FP
-TN = NEG - FN
-# Compute precision, recall and F1-measure
-acc = 100 * (TP + TN) / (TP + TN + FP + FN)
-P = 100 * TP / (TP + FP)
-R = 100 * TP / (TP + FN)
-F1 = 2 * P * R / (P + R)
-fpr = 100 * FP / (FP + TN)
-tpr = 100 * TP / (TP + FN)
-print('false positive (FP): {}, false negative (FN): {}, Acc: {:.3f}%, Precision: {:.3f}%, Recall: {:.3f}%, F1-measure: {:.3f}%'.format(FP, FN, acc, P, R, F1))
-print('false positive rate: {:.3f}%, true positive rate: {:.3f}%'.format(fpr, tpr))
+    POS = len([v for k in gt.keys() for v in gt[k]])
+    NEG = X_test.shape[0] - POS
+    FP = len(fp)
+    FN = len(fn)
+    TP = POS - FP
+    TN = NEG - FN
+    # Compute precision, recall and F1-measure
+    acc = 100 * (TP + TN) / (TP + TN + FP + FN)
+    P = 100 * TP / (TP + FP)
+    R = 100 * TP / (TP + FN)
+    F1 = 2 * P * R / (P + R)
+    fpr = 100 * FP / (FP + TN)
+    tpr = 100 * TP / (TP + FN)
+    print('false positive (FP): {}, false negative (FN): {}, Acc: {:.3f}%, Precision: {:.3f}%, Recall: {:.3f}%, F1-measure: {:.3f}%'.format(FP, FN, acc, P, R, F1))
+    print('false positive rate: {:.3f}%, true positive rate: {:.3f}%'.format(fpr, tpr))
 
-# plot graph - reconstruction err w.r.t. to each sequence
-plot = True
-if plot:
-    import matplotlib.pyplot as plt
-    # Creating a simple line chart
-    plt.figure(figsize=(10, 5))
-    plt.plot(reconstruction_error, marker='o', linestyle='-', color='b')  # Plotting the line chart
-    plt.axhline(y=threshold, color='r', linestyle='-') # threshold
-    plt.title(f'AutoEncoder Reconstruction Error (Threshold: {threshold})')  # Title of the chart
-    plt.xlabel('Seq Index')  # X-axis label
-    plt.ylabel('AE Error')  # Y-axis label
-    plt.grid(True)  # Adding a grid
-    plt.savefig("test.png")  # Display the plot
+    df_results.append(pd.DataFrame({
+        'accuracy': [acc],
+        'precision': [P],
+        'recall': [R],
+        'f1-measure': [F1]
+    }))
+
+    # plot graph - reconstruction err w.r.t. to each sequence
+    plot = True
+    if plot:
+        import matplotlib.pyplot as plt
+        # Creating a simple line chart
+        plt.figure(figsize=(10, 5))
+        plt.plot(reconstruction_error, marker='o', linestyle='-', color='b')  # Plotting the line chart
+        plt.axhline(y=threshold, color='r', linestyle='-') # threshold
+        plt.title(f'AutoEncoder Reconstruction Error (Threshold: {threshold})')  # Title of the chart
+        plt.xlabel('Seq Index')  # X-axis label
+        plt.ylabel('AE Error')  # Y-axis label
+        plt.grid(True)  # Adding a grid
+        plt.savefig(f"test_kfold={fold}_{test_label}.png")  # Display the plot
 
 
-# combine and print anmolous sequences
-indices = torch.nonzero(anomalies).squeeze().tolist()
-combined_ranges = []
+    # combine and print anmolous sequences
+    indices = torch.nonzero(anomalies).squeeze().tolist()
+    combined_ranges = []
 
-start = end = indices[0]
+    start = end = indices[0]
 
-for idx in indices[1:]:
-    if idx == end + 1:
-        end = idx
-    else:
-        combined_ranges.append([start, end])
-        start = end = idx
+    for idx in indices[1:]:
+        if idx == end + 1:
+            end = idx
+        else:
+            combined_ranges.append([start, end])
+            start = end = idx
 
-combined_ranges.append([start, end])
-# print_features = ["rnti", "tmsi", "imsi", "msg", "cipher_alg", "int_alg", "est_cause"]
-print_features = ["rnti", "tmsi", "msg"]
-print("\n\n=====================================\n\n")
-df = df.replace('Securitymodecommand', 'NAS_Securitymodecommand')
-df = df.replace('Securitymodecomplete', 'NAS_Securitymodecomplete')
-df = df.replace('SecurityModeCommand', 'RRC_SecurityModeCommand')
-df = df.replace('SecurityModeComplete', 'RRC_SecurityModeComplete')
-for r in combined_ranges:
-    start = r[0]
-    end = r[1]
-    sequence_data = df.loc[start-sequence_length:end+sequence_length+1]
-    df_sequence = pd.DataFrame(sequence_data, columns=print_features)
-    print(df_sequence.to_string(index=False))
-    print()
+    combined_ranges.append([start, end])
+    # print_features = ["rnti", "tmsi", "imsi", "msg", "cipher_alg", "int_alg", "est_cause"]
+    print_features = ["rnti", "tmsi", "msg"]
+    print("\n\n=====================================\n\n")
+    df = df.replace('Securitymodecommand', 'NAS_Securitymodecommand')
+    df = df.replace('Securitymodecomplete', 'NAS_Securitymodecomplete')
+    df = df.replace('SecurityModeCommand', 'RRC_SecurityModeCommand')
+    df = df.replace('SecurityModeComplete', 'RRC_SecurityModeComplete')
+    for r in combined_ranges:
+        start = r[0]
+        end = r[1]
+        sequence_data = df.loc[start-sequence_length:end+sequence_length+1]
+        df_sequence = pd.DataFrame(sequence_data, columns=print_features)
+        print(df_sequence.to_string(index=False))
+        print()
 
+# save results for each fold
+df_results = pd.concat(df_results, axis=0)
+df_results.to_csv(f'results_autoencoder_{test_label}.csv', index=False)
+
+print('Average:')
+print(df_results.mean())
+
+print('\nStandard Deviation:')
+print(df_results.std())
 
 # for anomalies_idx in torch.nonzero(anomalies).squeeze():
 #     df_idx = anomalies_idx

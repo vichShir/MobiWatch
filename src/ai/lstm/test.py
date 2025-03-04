@@ -17,17 +17,18 @@ from sklearn.metrics import roc_curve, auc
 train_dataset = "5g-mobiwatch"
 train_label = "benign"
 delimeter = ";"
-
-model_dict = torch.load(f'save/lstm_multivariate_{train_dataset}_{train_label}.pth.tar')
-model = model_dict['net']
-thres = model_dict['thres']
-print(thres)
+df_results = []
 
 # test data
 test_dataset = "5g-mobiwatch"
 test_label = "abnormal"
 
-if __name__ == "__main__":
+for fold in range(5):
+    model_dict = torch.load(f'save/lstm_multivariate_{train_dataset}_{train_label}_kfold={fold}.pth.tar')
+    model = model_dict['net']
+    thres = model_dict['thres']
+    print(thres)
+
     print(test_dataset, test_label)
     # Validate the performance of trained model
     data_folder = "../../../dataset/mobiflow"
@@ -103,7 +104,7 @@ if __name__ == "__main__":
         plt.xlabel('Seq Index')  # X-axis label
         plt.ylabel('RMSE')  # Y-axis label
         plt.grid(True)  # Adding a grid
-        plt.savefig("test.png")  # Display the plot
+        plt.savefig(f"test_kfold={fold}_{test_label}.png")  # Display the plot
 
     # ground truth
     gt = {"blind dos": [10, 21, 32], 
@@ -165,6 +166,13 @@ if __name__ == "__main__":
     print('false positive (FP): {}, false negative (FN): {}, Acc: {:.3f}%, Precision: {:.3f}%, Recall: {:.3f}%, F1-measure: {:.3f}%'.format(FP, FN, acc, P, R, F1))
     print('false positive rate: {:.3f}%, true positive rate: {:.3f}%'.format(fpr, tpr))
 
+    df_results.append(pd.DataFrame({
+        'accuracy': [acc],
+        'precision': [P],
+        'recall': [R],
+        'f1-measure': [F1]
+    }))
+
     # plot_name = "test_plot_%s_%s_%s" % (test_dataset, test_label, test_ver)
     # test_plot(test_feat, rmse_vec, thres, plot_name)
 
@@ -212,4 +220,13 @@ if __name__ == "__main__":
     # my_interpreter.show_plot(interp_feat, interpretation, normer)
     # my_interpreter.show_heatmap(interp_feat,interpretation, normer)
     # print(interpretation)
-    
+
+# save results for each fold
+df_results = pd.concat(df_results, axis=0)
+df_results.to_csv(f'results_lstm_{test_label}.csv', index=False)
+
+print('Average:')
+print(df_results.mean())
+
+print('\nStandard Deviation:')
+print(df_results.std())
